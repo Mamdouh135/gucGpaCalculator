@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GUC GPA Calculator</title>
+    <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 300px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+      color: #333;
+    }
+
+    .popup-container {
+      padding: 0;
+    }
+
+    /* Header */
+    .popup-header {
+      background: linear-gradient(135deg, #004a99 0%, #003366 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .popup-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .popup-header p {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+
+    /* Content */
+    .popup-content {
+      padding: 20px;
+    }
+
+    /* Toggle Section */
+    .toggle-section {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      background: white;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+
+    .toggle-label {
+      font-weight: 600;
+      font-size: 14px;
+      color: #333;
+    }
+
+    .toggle-description {
+      font-size: 12px;
+      color: #666;
+      margin-top: 2px;
+    }
+
+    /* Toggle Switch */
+    .toggle-switch {
+      position: relative;
+      width: 50px;
+      height: 26px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: 0.3s;
+      border-radius: 26px;
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 20px;
+      width: 20px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.3s;
+      border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    input:checked + .toggle-slider {
+      background: linear-gradient(135deg, #d4a843 0%, #b08a2e 100%);
+    }
+
+    input:checked + .toggle-slider:before {
+      transform: translateX(24px);
+    }
+
+    /* Buttons */
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 14px 20px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #004a99 0%, #003366 100%);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 74, 153, 0.3);
+    }
+
+    .btn-secondary {
+      background: white;
+      color: #004a99;
+      border: 2px solid #004a99;
+    }
+
+    .btn-secondary:hover {
+      background: #004a99;
+      color: white;
+    }
+
+    .btn-danger {
+      background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* Status Message */
+    .status-message {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      text-align: center;
+      display: none;
+    }
+
+    .status-message.success {
+      display: block;
+      background: rgba(40, 167, 69, 0.1);
+      color: #28a745;
+      border: 1px solid rgba(40, 167, 69, 0.2);
+    }
+
+    .status-message.error {
+      display: block;
+      background: rgba(220, 53, 69, 0.1);
+      color: #dc3545;
+      border: 1px solid rgba(220, 53, 69, 0.2);
+    }
+
+    .status-message.warning {
+      display: block;
+      background: rgba(255, 193, 7, 0.1);
+      color: #d48806;
+      border: 1px solid rgba(255, 193, 7, 0.2);
+    }
+
+    /* Footer */
+    .popup-footer {
+      padding: 16px 20px;
+      background: #f8f9fa;
+      border-top: 1px solid #e9ecef;
+      text-align: center;
+    }
+
+    .popup-footer a {
+      color: #004a99;
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .popup-footer a:hover {
+      text-decoration: underline;
+    }
+
+    .version {
+      font-size: 11px;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    /* Info Box */
+    .info-box {
+      background: rgba(0, 74, 153, 0.05);
+      border: 1px solid rgba(0, 74, 153, 0.1);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+
+    .info-box h3 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #004a99;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .info-box p {
+      font-size: 12px;
+      color: #666;
+      line-height: 1.5;
+    }
+  </style>
+  </head>
+  <body>
+    <div class="popup-container">
+      <div class="popup-header">
+        <h1>📊 GUC GPA Calculator</h1>
+        <p>Transcript Grade Predictor & Analyzer</p>
+      </div>
+
+      <div class="popup-content">
+        <div class="toggle-section">
+          <div>
+            <div class="toggle-label">Extension Enabled</div>
+            <div class="toggle-description">Show GPA calculator on
+              transcript</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggle-enabled" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="info-box">
+          <h3>💡 How to use</h3>
+          <p>
+            Visit your GUC transcript page. The calculator will
+            automatically detect pending courses and let you predict
+            grades to see your potential GPA.
+          </p>
+        </div>
+
+        <!-- GUC Grading Info Section -->
+        <div class="info-box" style="margin-bottom:18px;">
+          <h3>ℹ️ GUC Grading & GPA Calculation</h3>
+          <div style="font-size:13px;line-height:1.6;">
+            <b>GPA is calculated using the lowest value for each letter
+              grade:</b><br>
+            <table
+              style="margin:8px 0 0 0;font-size:13px;width:100%;border-collapse:collapse;">
+              <tr><td>A+</td><td>= 0.7</td><td>A</td><td>=
+                  1.0</td><td>A-</td><td>= 1.3</td></tr>
+              <tr><td>B+</td><td>= 1.7</td><td>B</td><td>=
+                  2.0</td><td>B-</td><td>= 2.3</td></tr>
+              <tr><td>C+</td><td>= 2.7</td><td>C</td><td>=
+                  3.0</td><td>C-</td><td>= 3.3</td></tr>
+              <tr><td>D</td><td>= 3.7</td><td>F</td><td>=
+                  5.0</td><td></td><td></td></tr>
+            </table>
+            <div style="margin-top:6px;color:#666;">For example, if you get an
+              A+ (0.7–1.0), your GPA is calculated using <b>0.7</b>.</div>
+          </div>
+        </div>
+
+        <!-- User Courses Input Section -->
+        <div class="info-box" style="margin-bottom:18px;">
+          <h3>➕ Add Your Courses</h3>
+          <form id="courses-form" autocomplete="off"
+            style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;gap:6px;">
+              <input type="text" id="course-name" placeholder="Course Name"
+                style="flex:2;padding:6px 8px;border-radius:6px;border:1px solid #ccc;font-size:13px;">
+              <input type="number" id="course-credits" placeholder="Credits"
+                min="1"
+                style="width:60px;padding:6px 8px;border-radius:6px;border:1px solid #ccc;font-size:13px;">
+              <button type="submit" class="btn btn-secondary"
+                style="padding:6px 10px;font-size:13px;">Add</button>
+            </div>
+          </form>
+          <ul id="courses-list"
+            style="margin:8px 0 0 0;padding:0;list-style:none;font-size:13px;"></ul>
+        </div>
+
+        <!-- Target GPA Section -->
+        <div class="info-box" style="margin-bottom:18px;">
+          <h3>🎯 Set Target GPA</h3>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="number" id="target-gpa" placeholder="e.g. 1.7"
+              min="0.7" max="5.0" step="0.01"
+              style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid #ccc;font-size:13px;">
+            <button id="btn-calc-target" class="btn btn-primary"
+              style="padding:6px 12px;font-size:13px;">Calculate</button>
+          </div>
+          <div id="target-result" style="margin-top:8px;font-size:13px;"></div>
+        </div>
+
+        <div class="btn-group">
+          <button id="btn-open-transcript" class="btn btn-primary">
+            🌐 Open Transcript Page
+          </button>
+          <button id="btn-reset" class="btn btn-danger">
+            🔄 Reset All Predictions
+          </button>
+        </div>
+
+        <div id="status-message" class="status-message"></div>
+      </div>
+
+      <div class="popup-footer">
+        <a href="https://apps.guc.edu.eg" target="_blank">GUC Student
+          Portal</a>
+        <div class="version">Version 1.0.0</div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

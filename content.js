@@ -1,0 +1,1247 @@
+//
+/**
+ * GUC Transcript GPA Calculator - Content Script
+ * Multi-page semester support: stores each semester separately
+ * Aggregates all stored semesters for cumulative GPA
+ */
+(function() {
+  console.log('🎓 GUC GPA Calculator: Script loaded');
+  
+  // Configuration
+  const CONFIG = {
+    MIN_GRADE: 0.7,       // Best grade
+    MAX_GRADE: 5.0,       // Failing grade
+    PASS_THRESHOLD: 4.0,  // Grades above this are failing
+    STORAGE_KEY: 'gucSemesters',  // Key for storing all semesters
+    GERMAN_CREDITS: {
+      1: 2,  // German 1: 2 credits
+      2: 4,  // German 2: 4 credits (replaces German 1)
+      3: 6,  // German 3: 6 credits (replaces German 1 & 2)
+      4: 8   // German 4: 8 credits (replaces all previous)
+    }
+  };
+
+  // State
+  let isEnabled = true;
+  let isDarkMode = false;
+  let currentSemesterData = [];   // Courses from current page
+  let allSemestersData = {};      // All stored semesters {semesterId: courses[]}
+  let predictedGrades = {};
+  let transcriptTable = null;
+  let semesterDropdown = null;
+  let currentSemesterId = '';
+  let creditHoursCol = -1;
+  let gradeCol = -1;
+
+  // Initialize extension
+  async function init() {
+    console.log('🎓 GUC GPA Calculator: Initializing...');
+    
+    // Load stored data
+    try {
+      const storage = await chrome.storage.local.get(['enabled', 'darkMode', 'predictedGrades', CONFIG.STORAGE_KEY]);
+      isEnabled = storage.enabled !== false;
+      isDarkMode = storage.darkMode || false;
+      predictedGrades = storage.predictedGrades || {};
+      allSemestersData = storage[CONFIG.STORAGE_KEY] || {};
+    } catch (e) {
+      console.log('🎓 Storage not available, using defaults');
+    }
+
+    console.log(`🎓 Loaded ${Object.keys(allSemestersData).length} stored semester(s)`);
+
+    if (!isEnabled) {
+      console.log('🎓 GUC GPA Calculator: Extension disabled');
+      return;
+    }
+
+    // Find semester dropdown first
+    semesterDropdown = findSemesterDropdown();
+    if (semesterDropdown) {
+      currentSemesterId = getSemesterIdFromDropdown();
+      console.log(`🎓 Current semester: ${currentSemesterId}`);
+      
+      // Watch for dropdown changes
+      semesterDropdown.addEventListener('change', onSemesterChange);
+    } else {
+      console.log('🎓 No semester dropdown found, using page URL as identifier');
+      currentSemesterId = window.location.href;
+    }
+
+    // Find transcript table on current page
+    transcriptTable = findTranscriptTable();
+    if (!transcriptTable) {
+      console.log('🎓 GUC GPA Calculator: No transcript table found on this page');
+      // Still show dashboard with stored semesters
+      createDashboard();
+      updateGPACalculations();
+      return;
+    }
+
+    console.log('🎓 GUC GPA Calculator: Found transcript table!');
+    
+    // Detect column indices
+    detectColumns();
+    
+    if (creditHoursCol === -1 || gradeCol === -1) {
+      console.log('🎓 GUC GPA Calculator: Could not detect Credit Hours or Grade columns');
+      return;
+    }
+
+    console.log(`🎓 Credit Hours column: ${creditHoursCol}, Grade column: ${gradeCol}`);
+
+    // Scrape current page's transcript
+    scrapeCurrentSemester();
+    
+    // Save current semester to storage
+    await saveSemesterData();
+    
+    injectPredictorInputs();
+    createDashboard();
+    updateGPACalculations();
+    
+    // Apply dark mode if enabled
+    if (isDarkMode) {
+      document.body.classList.add('guc-dark-mode');
+    }
+    
+    console.log('🎓 GUC GPA Calculator: Fully initialized!');
+  }
+
+  // Find semester selection dropdown
+  function findSemesterDropdown() {
+    // Common patterns for semester dropdowns
+    const selectors = [
+      'select[name*="semester" i]',
+      'select[name*="term" i]',
+      'select[id*="semester" i]',
+      'select[id*="term" i]',
+      'select[id*="ddl" i]',
+      '#ContentPlaceHolder1_ddlSemester',
+      '#ddlSemester',
+      '#cboSemester'
+    ];
+
+    for (const selector of selectors) {
+      const dropdown = document.querySelector(selector);
+      if (dropdown) {
+        console.log(`🎓 Found semester dropdown: ${selector}`);
+        return dropdown;
+      }
+    }
+
+    // Fallback: find any select that has semester-like options
+    const allSelects = document.querySelectorAll('select');
+    for (const select of allSelects) {
+      const options = select.querySelectorAll('option');
+      for (const opt of options) {
+        const text = opt.textContent.toLowerCase();
+        if (text.includes('fall') || text.includes('spring') || text.includes('summer') || 
+            text.includes('semester') || text.includes('winter') || /20\d{2}/.test(text)) {
+          console.log('🎓 Found semester dropdown by option content');
+          return select;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  // Get current semester ID from dropdown
+  function getSemesterIdFromDropdown() {
+    if (!semesterDropdown) return 'default';
+    
+    const selectedOption = semesterDropdown.options[semesterDropdown.selectedIndex];
+    // Use both value and text for unique identification
+    return selectedOption ? `${selectedOption.value}_${selectedOption.textContent.trim()}` : 'default';
+  }
+
+  // Handle semester dropdown change
+  async function onSemesterChange() {
+    console.log('🎓 Semester changed, waiting for page update...');
+    
+    // Wait a bit for page to update (AJAX or page reload)
+    setTimeout(async () => {
+      currentSemesterId = getSemesterIdFromDropdown();
+      console.log(`🎓 New semester: ${currentSemesterId}`);
+      
+      // Re-find and re-scrape
+      transcriptTable = findTranscriptTable();
+      if (transcriptTable) {
+        creditHoursCol = -1;
+        gradeCol = -1;
+        detectColumns();
+        scrapeCurrentSemester();
+        await saveSemesterData();
+        updateGPACalculations();
+      }
+    }, 1000);
+  }
+
+  // Find transcript table on current page
+  function findTranscriptTable() {
+    // Try common IDs first
+    const commonIds = ['gvTranscript', 'GridView1', 'dgTranscript', 'tblTranscript', 'ContentPlaceHolder1_gvTranscript'];
+    for (const id of commonIds) {
+      const table = document.getElementById(id);
+      if (table && table.tagName === 'TABLE') {
+        console.log(`🎓 Found table by ID: ${id}`);
+        return table;
+      }
+    }
+
+    // Search all tables for ones that look like transcripts
+    const tables = document.querySelectorAll('table');
+    console.log(`🎓 Searching ${tables.length} tables for transcript data...`);
+    
+    for (const table of tables) {
+      if (isTranscriptTable(table)) {
+        console.log('🎓 Found transcript table by content analysis');
+        return table;
+      }
+    }
+
+    return null;
+  }
+
+  // Check if a table looks like a transcript
+  function isTranscriptTable(table) {
+    const text = table.textContent.toLowerCase();
+    const rows = table.querySelectorAll('tr');
+    
+    // Must have multiple rows
+    if (rows.length < 3) return false;
+    
+    // Look for keywords that indicate a transcript
+    const keywords = ['grade', 'credit', 'course', 'gpa', 'semester', 'hours', 'code'];
+    let keywordCount = 0;
+    for (const keyword of keywords) {
+      if (text.includes(keyword)) keywordCount++;
+    }
+    
+    // Also check for numeric grades (0.7 to 5.0 pattern)
+    const gradePattern = /\b[0-4]\.[0-9]\b/;
+    const hasGrades = gradePattern.test(table.textContent);
+    
+    return keywordCount >= 2 || hasGrades;
+  }
+
+  // Detect which columns contain credit hours and grades
+  function detectColumns() {
+    if (!transcriptTable) return;
+    
+    const headerRow = transcriptTable.querySelector('tr');
+    if (!headerRow) return;
+
+    const headers = headerRow.querySelectorAll('th, td');
+    
+    headers.forEach((header, index) => {
+      const text = header.textContent.toLowerCase().trim();
+      
+      // Detect credit hours column
+      if (creditHoursCol === -1 && (text.includes('credit') || text.includes('hours') || text.includes('ch') || text.includes('cr.') || text === 'cr')) {
+        creditHoursCol = index;
+        console.log(`🎓 Detected Credit Hours at column ${index}: "${header.textContent.trim()}"`);
+      }
+      
+      // Detect grade column
+      if (gradeCol === -1 && ((text.includes('grade') || text === 'gr' || text === 'gr.') && !text.includes('point'))) {
+        gradeCol = index;
+        console.log(`🎓 Detected Grade at column ${index}: "${header.textContent.trim()}"`);
+      }
+    });
+
+    // If not found by headers, try to detect by content
+    if (creditHoursCol === -1 || gradeCol === -1) {
+      detectColumnsByContent();
+    }
+  }
+
+  // Detect columns by analyzing actual data content
+  function detectColumnsByContent() {
+    if (!transcriptTable) return;
+    
+    const columnPatterns = {};
+    const rows = transcriptTable.querySelectorAll('tr');
+    if (rows.length < 2) return;
+
+    // Analyze a few data rows
+    const dataRows = Array.from(rows).slice(1, Math.min(6, rows.length));
+    
+    dataRows.forEach(row => {
+      const cells = row.querySelectorAll('td');
+      cells.forEach((cell, index) => {
+        if (!columnPatterns[index]) {
+          columnPatterns[index] = { creditLike: 0, gradeLike: 0 };
+        }
+        
+        const text = cell.textContent.trim();
+        const num = parseFloat(text);
+        
+        // Credit hours are usually small integers (1-6)
+        if (!isNaN(num) && num >= 1 && num <= 6 && Number.isInteger(num)) {
+          columnPatterns[index].creditLike++;
+        }
+        
+        // Grades are decimals between 0.7 and 5.0
+        if (!isNaN(num) && num >= 0.7 && num <= 5.0 && text.includes('.')) {
+          columnPatterns[index].gradeLike++;
+        }
+      });
+    });
+
+    // Find best matches
+    let bestCreditCol = -1, bestCreditScore = 0;
+    let bestGradeCol = -1, bestGradeScore = 0;
+    
+    for (const [col, patterns] of Object.entries(columnPatterns)) {
+      if (patterns.creditLike > bestCreditScore) {
+        bestCreditScore = patterns.creditLike;
+        bestCreditCol = parseInt(col);
+      }
+      if (patterns.gradeLike > bestGradeScore) {
+        bestGradeScore = patterns.gradeLike;
+        bestGradeCol = parseInt(col);
+      }
+    }
+
+    if (creditHoursCol === -1 && bestCreditCol !== -1) {
+      creditHoursCol = bestCreditCol;
+      console.log(`🎓 Auto-detected Credit Hours at column ${creditHoursCol} (by content)`);
+    }
+    
+    if (gradeCol === -1 && bestGradeCol !== -1) {
+      gradeCol = bestGradeCol;
+      console.log(`🎓 Auto-detected Grade at column ${gradeCol} (by content)`);
+    }
+  }
+
+  // Scrape current page's transcript (single semester)
+  function scrapeCurrentSemester() {
+    currentSemesterData = [];
+    if (!transcriptTable) return;
+
+    const rows = transcriptTable.querySelectorAll('tr');
+    let rowIndex = 0;
+    let isFirstRow = true;
+
+    rows.forEach((row) => {
+      // Skip header rows
+      if (isFirstRow || row.querySelectorAll('th').length > 0) {
+        isFirstRow = false;
+        return;
+      }
+
+      const cells = row.querySelectorAll('td');
+      if (cells.length <= Math.max(creditHoursCol, gradeCol)) return;
+
+      const creditHoursText = cells[creditHoursCol]?.textContent?.trim();
+      const gradeText = cells[gradeCol]?.textContent?.trim();
+      
+      const creditHours = parseFloat(creditHoursText);
+      const grade = parseFloat(gradeText);
+
+      // Get course name (usually first or second column)
+      const courseName = cells[1]?.textContent?.trim() || cells[0]?.textContent?.trim() || `Course ${rowIndex}`;
+
+      const isPending = !gradeText || 
+                        gradeText.toLowerCase() === 'pending' || 
+                        gradeText === '-' || 
+                        gradeText === '' ||
+                        gradeText === 'N/A' ||
+                        gradeText === '--' ||
+                        isNaN(grade);
+
+      // Only add rows that look like actual course entries
+      if (!isNaN(creditHours) && creditHours > 0) {
+        // Detect language course type
+        const langInfo = detectLanguageCourse(courseName, creditHours);
+        
+        currentSemesterData.push({
+          rowIndex: rowIndex,
+          row: row,
+          gradeCell: cells[gradeCol],
+          courseName: courseName,
+          creditHours: creditHours,
+          grade: isPending ? null : grade,
+          isPending: isPending,
+          isGerman: langInfo.isGerman,
+          germanLevel: langInfo.germanLevel,
+          isEnglish: langInfo.isEnglish,
+          semesterId: currentSemesterId
+        });
+        
+        rowIndex++;
+      }
+    });
+
+    console.log(`🎓 Scraped ${currentSemesterData.length} courses from current semester: ${currentSemesterId}`);
+  }
+
+  // Save current semester data to Chrome storage
+  async function saveSemesterData() {
+    if (currentSemesterData.length === 0) return;
+
+    // Create serializable version (without DOM references)
+    const coursesToStore = currentSemesterData.map(course => ({
+      courseName: course.courseName,
+      creditHours: course.creditHours,
+      grade: course.grade,
+      isPending: course.isPending,
+      isGerman: course.isGerman,
+      germanLevel: course.germanLevel,
+      isEnglish: course.isEnglish
+    }));
+
+    // Update stored semesters
+    allSemestersData[currentSemesterId] = {
+      courses: coursesToStore,
+      semesterName: getSemesterDisplayName(),
+      lastUpdated: new Date().toISOString()
+    };
+
+    // Save to Chrome storage
+    try {
+      await chrome.storage.local.set({ [CONFIG.STORAGE_KEY]: allSemestersData });
+      console.log(`🎓 Saved semester "${currentSemesterId}" to storage. Total semesters: ${Object.keys(allSemestersData).length}`);
+    } catch (e) {
+      console.log('🎓 Could not save to storage:', e);
+    }
+  }
+
+  // Get display name for current semester
+  function getSemesterDisplayName() {
+    if (semesterDropdown) {
+      const selectedOption = semesterDropdown.options[semesterDropdown.selectedIndex];
+      return selectedOption ? selectedOption.textContent.trim() : currentSemesterId;
+    }
+    return currentSemesterId;
+  }
+
+  // Get all courses from all stored semesters (for cumulative GPA)
+  function getAllStoredCourses() {
+    const allCourses = [];
+    
+    for (const [semesterId, semesterInfo] of Object.entries(allSemestersData)) {
+      if (semesterInfo.courses) {
+        semesterInfo.courses.forEach(course => {
+          allCourses.push({
+            ...course,
+            semesterId: semesterId,
+            semesterName: semesterInfo.semesterName
+          });
+        });
+      }
+    }
+    
+    return allCourses;
+  }
+
+  // Clear all stored semester data
+  async function clearStoredSemesters() {
+    allSemestersData = {};
+    try {
+      await chrome.storage.local.remove(CONFIG.STORAGE_KEY);
+      console.log('🎓 Cleared all stored semesters');
+    } catch (e) {
+      console.log('🎓 Could not clear storage:', e);
+    }
+    updateGPACalculations();
+  }
+
+  // Detect if a course is German or English
+  function detectLanguageCourse(courseName, creditHours) {
+    const name = courseName.toLowerCase();
+    let isGerman = false;
+    let germanLevel = 0;
+    let isEnglish = false;
+
+    // German course detection
+    // Patterns: "German 1", "German I", "GERM1", "German Language 1", etc.
+    const germanPatterns = [
+      /german\s*(language)?\s*(1|i|one)\b/i,
+      /germ\s*1\b/i,
+      /\bgerman\s*[i1]\b/i
+    ];
+    const germanPatterns2 = [
+      /german\s*(language)?\s*(2|ii|two)\b/i,
+      /germ\s*2\b/i,
+      /\bgerman\s*[ii2]\b/i
+    ];
+    const germanPatterns3 = [
+      /german\s*(language)?\s*(3|iii|three)\b/i,
+      /germ\s*3\b/i,
+      /\bgerman\s*iii\b/i
+    ];
+    const germanPatterns4 = [
+      /german\s*(language)?\s*(4|iv|four)\b/i,
+      /germ\s*4\b/i,
+      /\bgerman\s*iv\b/i
+    ];
+
+    // Check German levels (check higher levels first)
+    if (germanPatterns4.some(p => p.test(name)) || (name.includes('german') && creditHours === 8)) {
+      isGerman = true;
+      germanLevel = 4;
+    } else if (germanPatterns3.some(p => p.test(name)) || (name.includes('german') && creditHours === 6)) {
+      isGerman = true;
+      germanLevel = 3;
+    } else if (germanPatterns2.some(p => p.test(name)) || (name.includes('german') && creditHours === 4 && name.includes('german'))) {
+      isGerman = true;
+      germanLevel = 2;
+    } else if (germanPatterns.some(p => p.test(name)) || (name.includes('german') && creditHours === 2)) {
+      isGerman = true;
+      germanLevel = 1;
+    } else if (name.includes('german') || name.includes('germ')) {
+      // Generic German course detection by credit hours
+      isGerman = true;
+      if (creditHours === 2) germanLevel = 1;
+      else if (creditHours === 4) germanLevel = 2;
+      else if (creditHours === 6) germanLevel = 3;
+      else if (creditHours === 8) germanLevel = 4;
+      else germanLevel = 1; // Default
+    }
+
+    // English course detection
+    // Patterns: "Academic English", "AE", "English", "ENGL", etc.
+    // Note: AE is typically 4 credit hours
+    const englishPatterns = [
+      /\bae\b/i,
+      /academic\s*english/i,
+      /\benglish\b/i,
+      /\bengl\b/i,
+      /\beng\s*\d/i
+    ];
+
+    if (!isGerman && englishPatterns.some(p => p.test(name))) {
+      isEnglish = true;
+    }
+
+    return { isGerman, germanLevel, isEnglish };
+  }
+
+  // Process German courses - mark lower levels as excluded (across all semesters)
+  function processGermanCourses(courses) {
+    // Find all German courses
+    const germanCourses = courses.filter(c => c.isGerman && !c.isPending && c.grade !== null);
+    
+    if (germanCourses.length <= 1) return courses;
+
+    // Find the highest level German course completed
+    const highestLevel = Math.max(...germanCourses.map(c => c.germanLevel));
+    
+    // Mark lower level German courses as superseded
+    courses.forEach(course => {
+      if (course.isGerman && course.germanLevel < highestLevel && !course.isPending) {
+        course.isSuperseded = true;
+        console.log(`🎓 German ${course.germanLevel} superseded by German ${highestLevel}`);
+      }
+    });
+    
+    return courses;
+  }
+
+  // Inject input fields for pending grades (current semester only)
+  function injectPredictorInputs() {
+    currentSemesterData.forEach((course) => {
+      if (course.isPending && course.gradeCell) {
+        // Check if input already exists
+        if (course.gradeCell.querySelector('.guc-grade-input')) return;
+
+        const originalContent = course.gradeCell.innerHTML;
+        
+        // Create input wrapper
+        const wrapper = document.createElement('div');
+        wrapper.className = 'guc-input-wrapper';
+        
+        // Preserve original content if any
+        if (originalContent && originalContent.trim() && originalContent.trim() !== '-') {
+          const originalSpan = document.createElement('span');
+          originalSpan.className = 'guc-original-grade';
+          originalSpan.textContent = originalContent;
+          wrapper.appendChild(originalSpan);
+        }
+
+        // Create input
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'guc-grade-input';
+        input.placeholder = 'Grade';
+        input.min = CONFIG.MIN_GRADE;
+        input.max = CONFIG.MAX_GRADE;
+        input.step = '0.1';
+        input.dataset.rowIndex = course.rowIndex;
+        input.dataset.courseName = course.courseName;
+
+        // Restore saved predicted grade
+        const savedGrade = predictedGrades[course.rowIndex];
+        if (savedGrade !== undefined) {
+          input.value = savedGrade;
+        }
+
+        // Add event listener for real-time updates
+        input.addEventListener('input', handleGradeInput);
+        input.addEventListener('change', handleGradeInput);
+
+        wrapper.appendChild(input);
+        course.gradeCell.innerHTML = '';
+        course.gradeCell.appendChild(wrapper);
+      }
+    });
+  }
+
+  // Handle grade input changes
+  function handleGradeInput(event) {
+    const input = event.target;
+    const rowIndex = parseInt(input.dataset.rowIndex);
+    const value = parseFloat(input.value);
+
+    // Validate input
+    if (!isNaN(value)) {
+      if (value < CONFIG.MIN_GRADE) {
+        input.value = CONFIG.MIN_GRADE;
+        predictedGrades[rowIndex] = CONFIG.MIN_GRADE;
+      } else if (value > CONFIG.MAX_GRADE) {
+        input.value = CONFIG.MAX_GRADE;
+        predictedGrades[rowIndex] = CONFIG.MAX_GRADE;
+      } else {
+        predictedGrades[rowIndex] = value;
+      }
+    } else {
+      delete predictedGrades[rowIndex];
+    }
+
+    // Save to storage
+    try {
+      chrome.storage.local.set({ predictedGrades: predictedGrades });
+    } catch (e) {
+      console.log('🎓 Could not save to storage');
+    }
+
+    // Update calculations
+    updateGPACalculations();
+  }
+
+  // Create floating dashboard
+  function createDashboard() {
+    // Remove existing dashboard if any
+    const existingDashboard = document.getElementById('guc-gpa-dashboard');
+    if (existingDashboard) existingDashboard.remove();
+
+    const dashboard = document.createElement('div');
+    dashboard.id = 'guc-gpa-dashboard';
+    dashboard.className = 'guc-dashboard';
+
+    dashboard.innerHTML = `
+      <div class="guc-dashboard-header">
+        <h3>📊 GPA Calculator</h3>
+        <div class="guc-dashboard-controls">
+          <button id="guc-dark-toggle" class="guc-btn guc-btn-icon" title="Toggle Dark Mode">🌙</button>
+          <button id="guc-minimize" class="guc-btn guc-btn-icon" title="Minimize">➖</button>
+        </div>
+      </div>
+
+      <div class="guc-dashboard-content">
+        <div class="guc-section" id="guc-section-overview">
+          <div class="guc-section-header" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
+            <span style="font-size:15px;font-weight:600;">📈 GPA Overview & Stats</span>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button id="guc-add-pending-btn" class="guc-btn-small" style="font-size:14px;">➕ Add Pending Course</button>
+              <button id="toggle-overview" class="guc-btn-small" style="font-size:16px;">▲</button>
+            </div>
+          </div>
+          <div class="guc-section-body" id="guc-overview-body">
+                        <form id="guc-add-pending-form" style="display:none;margin-bottom:12px;gap:8px;align-items:center;flex-wrap:wrap;">
+                          <input id="guc-pending-name" type="text" placeholder="Course Name" style="width:120px;font-size:13px;" required />
+                          <input id="guc-pending-credits" type="number" min="1" step="1" placeholder="Credits" style="width:60px;font-size:13px;" required />
+                          <button type="submit" class="guc-btn-small" style="font-size:13px;">Add</button>
+                          <button type="button" id="guc-cancel-pending" class="guc-btn-small" style="font-size:13px;">Cancel</button>
+                        </form>
+            <div class="guc-gpa-section">
+              <div class="guc-gpa-box">
+                <span class="guc-gpa-label">Current GPA</span>
+                <span id="guc-current-gpa" class="guc-gpa-value">-</span>
+                <span id="guc-current-credits" class="guc-credits-info">0 credits</span>
+              </div>
+              <div class="guc-gpa-box guc-predicted">
+                <span class="guc-gpa-label">Predicted GPA</span>
+                <span id="guc-predicted-gpa" class="guc-gpa-value">-</span>
+                <span id="guc-predicted-credits" class="guc-credits-info">0 credits</span>
+              </div>
+            </div>
+            <div class="guc-lang-section">
+              <h4>🌍 GPA Without Languages</h4>
+              <div class="guc-lang-grid">
+                <div class="guc-lang-box">
+                  <span class="guc-lang-label">Without German</span>
+                  <span id="guc-gpa-no-german" class="guc-lang-value">-</span>
+                </div>
+                <div class="guc-lang-box">
+                  <span class="guc-lang-label">Without English</span>
+                  <span id="guc-gpa-no-english" class="guc-lang-value">-</span>
+                </div>
+                <div class="guc-lang-box guc-lang-both">
+                  <span class="guc-lang-label">Without Both</span>
+                  <span id="guc-gpa-no-langs" class="guc-lang-value">-</span>
+                </div>
+              </div>
+              <div id="guc-lang-info" class="guc-lang-info"></div>
+            </div>
+            <div class="guc-stats-section">
+              <h4>📊 Statistics</h4>
+              <div class="guc-stats-grid">
+                <div class="guc-stat-item">
+                  <span class="guc-stat-label">Semesters</span>
+                  <span id="guc-semester-count" class="guc-stat-value">0</span>
+                </div>
+                <div class="guc-stat-item">
+                  <span class="guc-stat-label">Completed</span>
+                  <span id="guc-completed-count" class="guc-stat-value">0</span>
+                </div>
+                <div class="guc-stat-item">
+                  <span class="guc-stat-label">Pending</span>
+                  <span id="guc-pending-count" class="guc-stat-value">0</span>
+                </div>
+                <div class="guc-stat-item">
+                  <span class="guc-stat-label">Total Cr.</span>
+                  <span id="guc-total-credits" class="guc-stat-value">0</span>
+                </div>
+              </div>
+            </div>
+            <div class="guc-semesters-section">
+              <h4>📚 Stored Semesters <button id="guc-clear-semesters" class="guc-btn-small" title="Clear all stored semesters">🗑️</button></h4>
+              <div id="guc-semesters-list" class="guc-semesters-list">
+                <span class="guc-no-semesters">No semesters stored yet. Visit each semester page to collect data.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="guc-section" id="guc-section-goal">
+          <div class="guc-section-header" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
+            <span style="font-size:15px;font-weight:600;">🎯 Goal Finder & Grading Info</span>
+            <button id="toggle-goal" class="guc-btn-small" style="font-size:16px;">▼</button>
+          </div>
+          <div class="guc-section-body" id="guc-goal-body" style="display:none;">
+            <div class="guc-goal-section">
+              <div class="guc-goal-input-group">
+                <label for="guc-target-gpa">Target GPA:</label>
+                <input type="number" id="guc-target-gpa" min="${CONFIG.MIN_GRADE}" max="${CONFIG.MAX_GRADE}" step="0.1" placeholder="e.g., 1.7">
+                <button id="guc-calculate-goal" class="guc-btn guc-btn-primary">Calculate</button>
+              </div>
+              <div id="guc-goal-result" class="guc-goal-result"></div>
+            </div>
+            <div class="info-box" style="margin:18px 0 0 0;">
+              <h3 style="font-size:15px;margin-bottom:4px;">ℹ️ GUC Grading & GPA Calculation</h3>
+              <div style="font-size:13px;line-height:1.6;">
+                <b>GPA is calculated using the lowest value for each letter grade:</b><br>
+                <table style="margin:8px 0 0 0;font-size:13px;width:100%;border-collapse:collapse;">
+                  <tr><td>A+</td><td>= 0.7</td><td>A</td><td>= 1.0</td><td>A-</td><td>= 1.3</td></tr>
+                  <tr><td>B+</td><td>= 1.7</td><td>B</td><td>= 2.0</td><td>B-</td><td>= 2.3</td></tr>
+                  <tr><td>C+</td><td>= 2.7</td><td>C</td><td>= 3.0</td><td>C-</td><td>= 3.3</td></tr>
+                  <tr><td>D</td><td>= 3.7</td><td>F</td><td>= 5.0</td><td></td><td></td></tr>
+                </table>
+                <div style="margin-top:6px;color:#666;">For example, if you get an A+ (0.7–1.0), your GPA is calculated using <b>0.7</b>.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(dashboard);
+
+    // Add Pending Course logic
+    const addPendingBtn = document.getElementById('guc-add-pending-btn');
+    const addPendingForm = document.getElementById('guc-add-pending-form');
+    const pendingNameInput = document.getElementById('guc-pending-name');
+    const pendingCreditsInput = document.getElementById('guc-pending-credits');
+    const cancelPendingBtn = document.getElementById('guc-cancel-pending');
+    if (addPendingBtn && addPendingForm && pendingNameInput && pendingCreditsInput && cancelPendingBtn) {
+      addPendingBtn.addEventListener('click', () => {
+        addPendingForm.style.display = 'flex';
+        addPendingBtn.style.display = 'none';
+        pendingNameInput.value = '';
+        pendingCreditsInput.value = '';
+      });
+      cancelPendingBtn.addEventListener('click', () => {
+        addPendingForm.style.display = 'none';
+        addPendingBtn.style.display = '';
+      });
+      addPendingForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = pendingNameInput.value.trim();
+        const credits = parseInt(pendingCreditsInput.value, 10);
+        if (!name || isNaN(credits) || credits <= 0) return;
+        // Add to currentSemesterData
+        currentSemesterData.push({
+          rowIndex: currentSemesterData.length,
+          row: null,
+          gradeCell: null,
+          courseName: name,
+          creditHours: credits,
+          grade: null,
+          isPending: true,
+          isGerman: false,
+          germanLevel: null,
+          isEnglish: false,
+          semesterId: currentSemesterId
+        });
+        await saveSemesterData();
+        addPendingForm.style.display = 'none';
+        addPendingBtn.style.display = '';
+        updateGPACalculations();
+      });
+    }
+
+    // Add event listeners
+    document.getElementById('guc-dark-toggle').addEventListener('click', toggleDarkMode);
+    document.getElementById('guc-minimize').addEventListener('click', toggleMinimize);
+    document.getElementById('guc-calculate-goal').addEventListener('click', (e) => { e.preventDefault(); calculateGoal(); });
+    document.getElementById('guc-target-gpa').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); calculateGoal(); }
+    });
+    document.getElementById('guc-clear-semesters').addEventListener('click', clearStoredSemesters);
+
+    // Collapsible section toggles
+    const overviewBody = document.getElementById('guc-overview-body');
+    const goalBody = document.getElementById('guc-goal-body');
+    const toggleOverview = document.getElementById('toggle-overview');
+    const toggleGoal = document.getElementById('toggle-goal');
+    toggleOverview.addEventListener('click', () => {
+      if (overviewBody.style.display === 'none') {
+        overviewBody.style.display = '';
+        toggleOverview.textContent = '▲';
+      } else {
+        overviewBody.style.display = 'none';
+        toggleOverview.textContent = '▼';
+      }
+    });
+    toggleGoal.addEventListener('click', () => {
+      if (goalBody.style.display === 'none') {
+        goalBody.style.display = '';
+        toggleGoal.textContent = '▼';
+      } else {
+        goalBody.style.display = 'none';
+        toggleGoal.textContent = '▲';
+      }
+    });
+    // Default: Overview open, Goal closed
+    overviewBody.style.display = '';
+    goalBody.style.display = 'none';
+
+    // Make dashboard draggable
+    makeDraggable(dashboard);
+  }
+
+  // Update GPA calculations using ALL stored semesters
+  function updateGPACalculations() {
+    // Get all courses from all stored semesters
+    let allCourses = getAllStoredCourses();
+    
+    // Process German courses across all semesters
+    allCourses = processGermanCourses(allCourses);
+
+    // Initialize all counters
+    let completedCredits = 0;
+    let completedWeightedSum = 0;
+    let predictedCredits = 0;
+    let predictedWeightedSum = 0;
+    let completedCount = 0;
+    let pendingCount = 0;
+
+    // Language-specific counters
+    let noGermanCredits = 0, noGermanWeightedSum = 0;
+    let noEnglishCredits = 0, noEnglishWeightedSum = 0;
+    let noLangsCredits = 0, noLangsWeightedSum = 0;
+    
+    // Track language courses for info display
+    let germanCourses = [];
+    let englishCourses = [];
+
+    allCourses.forEach((course) => {
+      if (course.creditHours <= 0) return;
+      // Skip superseded German courses (lower levels)
+      if (course.isSuperseded) return;
+
+      if (!course.isPending && course.grade !== null) {
+        // Completed course
+        completedCredits += course.creditHours;
+        completedWeightedSum += course.grade * course.creditHours;
+        completedCount++;
+
+        // Also add to predicted totals
+        predictedCredits += course.creditHours;
+        predictedWeightedSum += course.grade * course.creditHours;
+
+        // Calculate GPA variants without languages
+        if (!course.isGerman) {
+          noGermanCredits += course.creditHours;
+          noGermanWeightedSum += course.grade * course.creditHours;
+        } else {
+          germanCourses.push({ name: course.courseName, grade: course.grade, credits: course.creditHours, level: course.germanLevel });
+        }
+
+        if (!course.isEnglish) {
+          noEnglishCredits += course.creditHours;
+          noEnglishWeightedSum += course.grade * course.creditHours;
+        } else {
+          englishCourses.push({ name: course.courseName, grade: course.grade, credits: course.creditHours });
+        }
+
+        if (!course.isGerman && !course.isEnglish) {
+          noLangsCredits += course.creditHours;
+          noLangsWeightedSum += course.grade * course.creditHours;
+        }
+      } else if (course.isPending) {
+        pendingCount++;
+      }
+    });
+
+    // Add predicted grades from current page
+    currentSemesterData.forEach((course) => {
+      if (course.isPending) {
+        const predictedGrade = predictedGrades[course.rowIndex];
+        if (predictedGrade !== undefined && !isNaN(predictedGrade)) {
+          predictedCredits += course.creditHours;
+          predictedWeightedSum += predictedGrade * course.creditHours;
+        }
+      }
+    });
+
+    // Calculate GPAs
+    const currentGPA = completedCredits > 0 ? 
+      (completedWeightedSum / completedCredits).toFixed(2) : '-';
+    const predictedGPA = predictedCredits > 0 ? 
+      (predictedWeightedSum / predictedCredits).toFixed(2) : '-';
+    
+    // Calculate language-excluded GPAs
+    const noGermanGPA = noGermanCredits > 0 ? 
+      (noGermanWeightedSum / noGermanCredits).toFixed(2) : '-';
+    const noEnglishGPA = noEnglishCredits > 0 ? 
+      (noEnglishWeightedSum / noEnglishCredits).toFixed(2) : '-';
+    const noLangsGPA = noLangsCredits > 0 ? 
+      (noLangsWeightedSum / noLangsCredits).toFixed(2) : '-';
+
+    // Update dashboard - main GPA
+    const currentGpaEl = document.getElementById('guc-current-gpa');
+    const predictedGpaEl = document.getElementById('guc-predicted-gpa');
+    
+    if (currentGpaEl) {
+      currentGpaEl.textContent = currentGPA;
+      document.getElementById('guc-current-credits').textContent = `${completedCredits} credits`;
+    }
+    if (predictedGpaEl) {
+      predictedGpaEl.textContent = predictedGPA;
+      document.getElementById('guc-predicted-credits').textContent = `${predictedCredits} credits`;
+    }
+    
+    // Update language-excluded GPAs
+    const noGermanEl = document.getElementById('guc-gpa-no-german');
+    const noEnglishEl = document.getElementById('guc-gpa-no-english');
+    const noLangsEl = document.getElementById('guc-gpa-no-langs');
+    
+    if (noGermanEl) noGermanEl.textContent = noGermanGPA;
+    if (noEnglishEl) noEnglishEl.textContent = noEnglishGPA;
+    if (noLangsEl) noLangsEl.textContent = noLangsGPA;
+
+    // Update language info
+    const langInfoEl = document.getElementById('guc-lang-info');
+    if (langInfoEl) {
+      let infoHtml = '';
+      if (germanCourses.length > 0) {
+        const gc = germanCourses[germanCourses.length - 1]; // Highest level
+        infoHtml += `<div>🇩🇪 German ${gc.level}: ${gc.grade} (${gc.credits} cr)</div>`;
+      }
+      if (englishCourses.length > 0) {
+        infoHtml += `<div>🇬🇧 English: ${englishCourses.map(e => e.grade).join(', ')} (${englishCourses.reduce((s,e) => s + e.credits, 0)} cr)</div>`;
+      }
+      langInfoEl.innerHTML = infoHtml;
+    }
+    
+    const completedCountEl = document.getElementById('guc-completed-count');
+    const pendingCountEl = document.getElementById('guc-pending-count');
+    const totalCreditsEl = document.getElementById('guc-total-credits');
+    const semesterCountEl = document.getElementById('guc-semester-count');
+    
+    const numSemesters = Object.keys(allSemestersData).length;
+    if (semesterCountEl) semesterCountEl.textContent = numSemesters;
+    if (completedCountEl) completedCountEl.textContent = completedCount;
+    if (pendingCountEl) pendingCountEl.textContent = pendingCount;
+    if (totalCreditsEl) {
+      const pendingCreditsTotal = allCourses.filter(c => c.isPending).reduce((sum, c) => sum + c.creditHours, 0);
+      totalCreditsEl.textContent = completedCredits + pendingCreditsTotal;
+    }
+
+    // Update stored semesters list
+    updateSemestersList();
+
+    // Color code GPA values
+    colorCodeGPA('guc-current-gpa', parseFloat(currentGPA));
+    colorCodeGPA('guc-predicted-gpa', parseFloat(predictedGPA));
+    colorCodeGPA('guc-gpa-no-german', parseFloat(noGermanGPA));
+    colorCodeGPA('guc-gpa-no-english', parseFloat(noEnglishGPA));
+    colorCodeGPA('guc-gpa-no-langs', parseFloat(noLangsGPA));
+  }
+
+  // Update the semesters list in dashboard
+  function updateSemestersList() {
+    const listEl = document.getElementById('guc-semesters-list');
+    if (!listEl) return;
+
+    const semesters = Object.entries(allSemestersData);
+    
+    if (semesters.length === 0) {
+      listEl.innerHTML = '<span class="guc-no-semesters">No semesters stored yet. Visit each semester page to collect data.</span>';
+      return;
+    }
+
+    listEl.innerHTML = semesters.map(([id, info]) => {
+      const courseCount = info.courses ? info.courses.length : 0;
+      const completedCount = info.courses ? info.courses.filter(c => !c.isPending && c.grade !== null).length : 0;
+      const isCurrent = id === currentSemesterId;
+      return `
+        <div class="guc-semester-item ${isCurrent ? 'guc-current-semester' : ''}">
+          <span class="guc-semester-name">${info.semesterName || id}</span>
+          <span class="guc-semester-info">${completedCount}/${courseCount} courses</span>
+          ${isCurrent ? '<span class="guc-current-badge">Current</span>' : ''}
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Color code GPA based on value
+  function colorCodeGPA(elementId, gpa) {
+    const element = document.getElementById(elementId);
+    if (!element || isNaN(gpa)) return;
+
+    element.classList.remove('guc-gpa-excellent', 'guc-gpa-good', 'guc-gpa-average', 'guc-gpa-poor', 'guc-gpa-fail');
+
+    if (gpa <= 1.0) {
+      element.classList.add('guc-gpa-excellent');
+    } else if (gpa <= 1.7) {
+      element.classList.add('guc-gpa-good');
+    } else if (gpa <= 2.7) {
+      element.classList.add('guc-gpa-average');
+    } else if (gpa <= 4.0) {
+      element.classList.add('guc-gpa-poor');
+    } else {
+      element.classList.add('guc-gpa-fail');
+    }
+  }
+
+  // Calculate goal - what grade needed in pending courses to reach target
+  function calculateGoal() {
+    const targetInput = document.getElementById('guc-target-gpa');
+    const resultDiv = document.getElementById('guc-goal-result');
+    const targetGPA = parseFloat(targetInput.value);
+
+    if (isNaN(targetGPA) || targetGPA < CONFIG.MIN_GRADE || targetGPA > CONFIG.MAX_GRADE) {
+      resultDiv.innerHTML = `<span class="guc-error">Please enter a valid target GPA (${CONFIG.MIN_GRADE} - ${CONFIG.MAX_GRADE})</span>`;
+      return;
+    }
+
+    // Get all courses from all stored semesters
+    let allCourses = getAllStoredCourses();
+    allCourses = processGermanCourses(allCourses);
+
+    // Calculate current totals
+    let completedCredits = 0;
+    let completedWeightedSum = 0;
+    let pendingCredits = 0;
+
+    allCourses.forEach((course) => {
+      if (course.creditHours <= 0 || course.isSuperseded) return;
+
+      if (!course.isPending && course.grade !== null) {
+        completedCredits += course.creditHours;
+        completedWeightedSum += course.grade * course.creditHours;
+      } else if (course.isPending) {
+        pendingCredits += course.creditHours;
+      }
+    });
+
+    if (pendingCredits === 0) {
+      resultDiv.innerHTML = `<span class="guc-warning">No pending courses found to calculate goal.</span>`;
+      return;
+    }
+
+    // Calculate required average grade for pending courses
+    const totalCredits = completedCredits + pendingCredits;
+    const targetWeightedSum = targetGPA * totalCredits;
+    const requiredPendingWeightedSum = targetWeightedSum - completedWeightedSum;
+    const requiredAvgGrade = requiredPendingWeightedSum / pendingCredits;
+
+    // Check if goal is achievable
+    if (requiredAvgGrade < CONFIG.MIN_GRADE) {
+      resultDiv.innerHTML = `
+        <span class="guc-success">
+          ✅ Great news! You can achieve a <strong>${targetGPA}</strong> GPA even with the best possible grade (${CONFIG.MIN_GRADE})!
+          <br>Required average: <strong>${requiredAvgGrade.toFixed(2)}</strong> (better than ${CONFIG.MIN_GRADE})
+        </span>
+      `;
+    } else if (requiredAvgGrade > CONFIG.PASS_THRESHOLD) {
+      resultDiv.innerHTML = `
+        <span class="guc-error">
+          ❌ Unfortunately, achieving a <strong>${targetGPA}</strong> GPA is not possible.
+          <br>Would require: <strong>${requiredAvgGrade.toFixed(2)}</strong> (above passing threshold)
+        </span>
+      `;
+    } else {
+      let difficultyClass = 'guc-info';
+      let emoji = '📝';
+      
+      if (requiredAvgGrade <= 1.3) {
+        difficultyClass = 'guc-success';
+        emoji = '🌟';
+      } else if (requiredAvgGrade <= 2.0) {
+        difficultyClass = 'guc-info';
+        emoji = '💪';
+      } else if (requiredAvgGrade <= 3.0) {
+        difficultyClass = 'guc-warning';
+        emoji = '⚠️';
+      } else {
+        difficultyClass = 'guc-error';
+        emoji = '🔥';
+      }
+
+      resultDiv.innerHTML = `
+        <span class="${difficultyClass}">
+          ${emoji} To achieve a <strong>${targetGPA}</strong> GPA:
+          <br>Average grade needed in pending courses: <strong>${requiredAvgGrade.toFixed(2)}</strong>
+          <br><small>(${pendingCredits} pending credits across ${allCourses.filter(c => c.isPending).length} courses)</small>
+        </span>
+      `;
+    }
+  }
+
+  // Toggle dark mode
+  function toggleDarkMode() {
+    isDarkMode = !isDarkMode;
+    document.body.classList.toggle('guc-dark-mode', isDarkMode);
+    try {
+      chrome.storage.local.set({ darkMode: isDarkMode });
+    } catch (e) {}
+    
+    const btn = document.getElementById('guc-dark-toggle');
+    if (btn) btn.textContent = isDarkMode ? '☀️' : '🌙';
+  }
+
+  // Toggle dashboard minimize
+  function toggleMinimize() {
+    const dashboard = document.getElementById('guc-gpa-dashboard');
+    const content = dashboard.querySelector('.guc-dashboard-content');
+    const btn = document.getElementById('guc-minimize');
+    
+    content.classList.toggle('guc-hidden');
+    if (btn) btn.textContent = content.classList.contains('guc-hidden') ? '➕' : '➖';
+  }
+
+  // Make element draggable
+  function makeDraggable(element) {
+    const header = element.querySelector('.guc-dashboard-header');
+    let isDragging = false;
+    let startX, startY, startLeft, startBottom;
+
+    header.addEventListener('mousedown', (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      
+      const rect = element.getBoundingClientRect();
+      startLeft = rect.left;
+      startBottom = window.innerHeight - rect.bottom;
+      
+      header.style.cursor = 'grabbing';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      
+      const deltaX = e.clientX - startX;
+      const deltaY = e.clientY - startY;
+      
+      element.style.left = `${startLeft + deltaX}px`;
+      element.style.bottom = `${startBottom - deltaY}px`;
+      element.style.right = 'auto';
+    });
+
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+      header.style.cursor = 'grab';
+    });
+  }
+
+  // Reset all predicted grades
+  window.resetPredictedGrades = function() {
+    predictedGrades = {};
+    try {
+      chrome.storage.local.set({ predictedGrades: {} });
+    } catch (e) {}
+    
+    // Clear all inputs
+    document.querySelectorAll('.guc-grade-input').forEach(input => {
+      input.value = '';
+    });
+    
+    updateGPACalculations();
+  };
+
+  // Listen for messages from popup
+  try {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message.action === 'reset') {
+        window.resetPredictedGrades();
+        sendResponse({ success: true });
+      } else if (message.action === 'toggle') {
+        isEnabled = message.enabled;
+        if (!isEnabled) {
+          // Remove dashboard
+          const dashboard = document.getElementById('guc-gpa-dashboard');
+          if (dashboard) dashboard.remove();
+          
+          // Remove injected inputs
+          document.querySelectorAll('.guc-input-wrapper').forEach(wrapper => {
+            const original = wrapper.querySelector('.guc-original-grade');
+            if (wrapper.parentElement) {
+              wrapper.parentElement.innerHTML = original ? original.textContent : '';
+            }
+          });
+        } else {
+          init();
+        }
+        sendResponse({ success: true });
+      } else if (message.action === 'getStatus') {
+        sendResponse({ 
+          enabled: isEnabled,
+          darkMode: isDarkMode,
+          hasDashboard: !!document.getElementById('guc-gpa-dashboard')
+        });
+      } else if (message.action === 'getCompletedCourses') {
+        // Return all completed courses (with grades and credits)
+        let allCourses = getAllStoredCourses();
+        allCourses = processGermanCourses(allCourses);
+        const completed = allCourses.filter(c => !c.isPending && c.grade !== null && c.creditHours > 0 && !c.isSuperseded)
+          .map(c => ({
+            courseName: c.courseName,
+            creditHours: c.creditHours,
+            grade: c.grade
+          }));
+        sendResponse({ completedCourses: completed });
+      }
+      return true;
+    });
+  } catch (e) {
+    console.log('🎓 Message listener not available');
+  }
+
+  // Initialize when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    // Small delay to ensure page is fully loaded
+    setTimeout(init, 500);
+  }
+})();

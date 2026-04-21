@@ -1,0 +1,665 @@
+/**
+ * GUC Transcript GPA Calculator - Styles
+ * GUC-inspired theme: Dark Blue (#004a99), Gold/Yellow accents
+ */
+
+/* CSS Variables for theming */
+:root {
+  --guc-primary: #004a99;
+  --guc-primary-dark: #003366;
+  --guc-primary-light: #0066cc;
+  --guc-gold: #d4a843;
+  --guc-gold-light: #f5d77e;
+  --guc-gold-dark: #b08a2e;
+  --guc-success: #28a745;
+  --guc-warning: #ffc107;
+  --guc-error: #dc3545;
+  --guc-info: #17a2b8;
+  --guc-bg: rgba(255, 255, 255, 0.95);
+  --guc-text: #333333;
+  --guc-text-muted: #666666;
+  --guc-border: rgba(0, 74, 153, 0.2);
+  --guc-shadow: rgba(0, 0, 0, 0.15);
+}
+
+/* Dark mode variables */
+.guc-dark-mode {
+  --guc-bg: rgba(30, 35, 45, 0.95);
+  --guc-text: #e8e8e8;
+  --guc-text-muted: #aaaaaa;
+  --guc-border: rgba(212, 168, 67, 0.3);
+  --guc-shadow: rgba(0, 0, 0, 0.4);
+}
+
+/* ============================================
+   FLOATING DASHBOARD
+   ============================================ */
+
+.guc-dashboard {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 340px;
+  max-height: 80vh;
+  background: var(--guc-bg);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px var(--guc-shadow), 0 2px 8px rgba(0, 74, 153, 0.1);
+  border: 1px solid var(--guc-border);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  z-index: 999999;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+
+.guc-dashboard:hover {
+  box-shadow: 0 12px 40px var(--guc-shadow), 0 4px 12px rgba(0, 74, 153, 0.15);
+}
+
+/* Dashboard Header */
+.guc-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, var(--guc-primary) 0%, var(--guc-primary-dark) 100%);
+  color: white;
+  cursor: grab;
+  user-select: none;
+}
+
+.guc-dashboard-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.guc-dashboard-controls {
+  display: flex;
+  gap: 8px;
+}
+
+/* Dashboard Content */
+.guc-dashboard-content {
+  padding: 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+  color: var(--guc-text);
+}
+
+.guc-dashboard-content.guc-hidden {
+  display: none;
+}
+
+.guc-dashboard-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.guc-dashboard-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.guc-dashboard-content::-webkit-scrollbar-thumb {
+  background: var(--guc-primary);
+  border-radius: 3px;
+}
+
+/* GPA Section */
+.guc-gpa-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.guc-gpa-box {
+  background: linear-gradient(135deg, rgba(0, 74, 153, 0.08) 0%, rgba(0, 74, 153, 0.03) 100%);
+  border-radius: 12px;
+  padding: 14px;
+  text-align: center;
+  border: 1px solid var(--guc-border);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.guc-gpa-box:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 74, 153, 0.1);
+}
+
+.guc-gpa-box.guc-predicted {
+  background: linear-gradient(135deg, rgba(212, 168, 67, 0.15) 0%, rgba(212, 168, 67, 0.05) 100%);
+  border-color: rgba(212, 168, 67, 0.3);
+}
+
+.guc-gpa-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--guc-text-muted);
+  margin-bottom: 6px;
+}
+
+.guc-gpa-value {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--guc-primary);
+  line-height: 1.2;
+}
+
+.guc-gpa-box.guc-predicted .guc-gpa-value {
+  color: var(--guc-gold-dark);
+}
+
+.guc-dark-mode .guc-gpa-value {
+  color: var(--guc-primary-light);
+}
+
+.guc-dark-mode .guc-gpa-box.guc-predicted .guc-gpa-value {
+  color: var(--guc-gold);
+}
+
+.guc-credits-info {
+  display: block;
+  font-size: 11px;
+  color: var(--guc-text-muted);
+  margin-top: 4px;
+}
+
+/* GPA Color Coding */
+.guc-gpa-excellent { color: #00a854 !important; }
+.guc-gpa-good { color: #108ee9 !important; }
+.guc-gpa-average { color: #faad14 !important; }
+.guc-gpa-poor { color: #f56a00 !important; }
+.guc-gpa-fail { color: #f5222d !important; }
+
+/* Language GPA Section */
+.guc-lang-section {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: linear-gradient(135deg, rgba(0, 150, 136, 0.08) 0%, rgba(0, 150, 136, 0.02) 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 150, 136, 0.2);
+}
+
+.guc-lang-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #00796b;
+}
+
+.guc-dark-mode .guc-lang-section h4 {
+  color: #4db6ac;
+}
+
+.guc-lang-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.guc-lang-box {
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  border: 1px solid rgba(0, 150, 136, 0.15);
+  transition: all 0.2s ease;
+}
+
+.guc-dark-mode .guc-lang-box {
+  background: rgba(0, 150, 136, 0.1);
+}
+
+.guc-lang-box:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 150, 136, 0.15);
+}
+
+.guc-lang-box.guc-lang-both {
+  grid-column: span 2;
+  background: linear-gradient(135deg, rgba(0, 150, 136, 0.15) 0%, rgba(0, 150, 136, 0.05) 100%);
+  border-color: rgba(0, 150, 136, 0.3);
+}
+
+.guc-lang-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--guc-text-muted);
+  margin-bottom: 4px;
+}
+
+.guc-lang-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #00796b;
+  line-height: 1.2;
+}
+
+.guc-dark-mode .guc-lang-value {
+  color: #4db6ac;
+}
+
+.guc-lang-info {
+  font-size: 11px;
+  color: var(--guc-text-muted);
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 150, 136, 0.15);
+}
+
+.guc-lang-info div {
+  padding: 2px 0;
+}
+
+/* Goal Section */
+.guc-goal-section {
+  margin-bottom: 20px;
+  padding: 14px;
+  background: rgba(212, 168, 67, 0.08);
+  border-radius: 12px;
+  border: 1px solid rgba(212, 168, 67, 0.2);
+}
+
+.guc-goal-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--guc-gold-dark);
+}
+
+.guc-dark-mode .guc-goal-section h4 {
+  color: var(--guc-gold);
+}
+
+.guc-goal-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.guc-goal-input-group label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--guc-text);
+}
+
+.guc-goal-input-group input {
+  flex: 1;
+  min-width: 80px;
+  padding: 8px 12px;
+  border: 1px solid var(--guc-border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--guc-bg);
+  color: var(--guc-text);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.guc-goal-input-group input:focus {
+  outline: none;
+  border-color: var(--guc-gold);
+  box-shadow: 0 0 0 3px rgba(212, 168, 67, 0.2);
+}
+
+.guc-goal-result {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 20px;
+}
+
+.guc-goal-result:empty {
+  display: none;
+}
+
+.guc-goal-result .guc-success {
+  color: var(--guc-success);
+}
+
+.guc-goal-result .guc-error {
+  color: var(--guc-error);
+}
+
+.guc-goal-result .guc-warning {
+  color: #d48806;
+}
+
+.guc-goal-result .guc-info {
+  color: var(--guc-info);
+}
+
+/* Stats Section */
+.guc-stats-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--guc-primary);
+}
+
+.guc-dark-mode .guc-stats-section h4 {
+  color: var(--guc-primary-light);
+}
+
+.guc-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.guc-stat-item {
+  text-align: center;
+  padding: 10px 8px;
+  background: rgba(0, 74, 153, 0.05);
+  border-radius: 8px;
+  border: 1px solid var(--guc-border);
+}
+
+.guc-stat-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: var(--guc-text-muted);
+  margin-bottom: 4px;
+}
+
+.guc-stat-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--guc-primary);
+}
+
+.guc-dark-mode .guc-stat-value {
+  color: var(--guc-primary-light);
+}
+
+/* ============================================
+   STORED SEMESTERS SECTION
+   ============================================ */
+
+.guc-semesters-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(0, 74, 153, 0.03);
+  border-radius: 12px;
+  border: 1px solid var(--guc-border);
+}
+
+.guc-semesters-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--guc-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.guc-dark-mode .guc-semesters-section h4 {
+  color: var(--guc-primary-light);
+}
+
+.guc-semesters-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.guc-no-semesters {
+  font-size: 12px;
+  color: var(--guc-text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: 8px;
+}
+
+.guc-semester-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--guc-bg);
+  border-radius: 8px;
+  border: 1px solid var(--guc-border);
+  font-size: 12px;
+}
+
+.guc-semester-item.guc-current-semester {
+  border-color: var(--guc-gold);
+  background: rgba(212, 168, 67, 0.1);
+}
+
+.guc-semester-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--guc-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.guc-semester-info {
+  font-size: 11px;
+  color: var(--guc-text-muted);
+}
+
+.guc-current-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: var(--guc-gold);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.guc-btn-small {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  padding: 2px 4px;
+}
+
+.guc-btn-small:hover {
+  opacity: 1;
+}
+
+/* ============================================
+   BUTTONS
+   ============================================ */
+
+.guc-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.guc-btn-primary {
+  background: linear-gradient(135deg, var(--guc-gold) 0%, var(--guc-gold-dark) 100%);
+  color: white;
+}
+
+.guc-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(212, 168, 67, 0.4);
+}
+
+.guc-btn-icon {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.guc-btn-icon:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.05);
+}
+
+/* ============================================
+   INJECTED GRADE INPUTS
+   ============================================ */
+
+.guc-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.guc-original-grade {
+  font-size: 11px;
+  color: #888;
+  font-style: italic;
+}
+
+.guc-grade-input {
+  width: 70px !important;
+  padding: 6px 10px !important;
+  border: 2px solid var(--guc-gold) !important;
+  border-radius: 6px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  text-align: center !important;
+  background: linear-gradient(135deg, rgba(212, 168, 67, 0.1) 0%, rgba(255, 255, 255, 1) 100%) !important;
+  color: var(--guc-primary) !important;
+  box-shadow: 0 2px 8px rgba(212, 168, 67, 0.2) !important;
+  transition: all 0.2s ease !important;
+  -moz-appearance: textfield !important;
+}
+
+.guc-grade-input::-webkit-outer-spin-button,
+.guc-grade-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.guc-grade-input:focus {
+  outline: none !important;
+  border-color: var(--guc-primary) !important;
+  box-shadow: 0 0 0 3px rgba(0, 74, 153, 0.2), 0 2px 8px rgba(212, 168, 67, 0.2) !important;
+  transform: scale(1.05);
+}
+
+.guc-grade-input::placeholder {
+  color: #aaa !important;
+  font-weight: 400 !important;
+}
+
+.guc-grade-input:hover {
+  border-color: var(--guc-primary) !important;
+}
+
+/* Dark mode input styles */
+.guc-dark-mode .guc-grade-input {
+  background: linear-gradient(135deg, rgba(212, 168, 67, 0.2) 0%, rgba(30, 35, 45, 1) 100%) !important;
+  color: var(--guc-gold-light) !important;
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+.guc-hidden {
+  display: none !important;
+}
+
+/* Animation for dashboard entrance */
+@keyframes guc-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.guc-dashboard {
+  animation: guc-slide-in 0.3s ease-out;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .guc-dashboard {
+    width: calc(100vw - 40px);
+    right: 20px;
+    left: 20px;
+  }
+
+  .guc-gpa-section {
+    grid-template-columns: 1fr;
+  }
+
+  .guc-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Print styles - hide dashboard when printing */
+@media print {
+  .guc-dashboard {
+    display: none !important;
+  }
+
+  .guc-grade-input {
+    border: 1px solid #ccc !important;
+    box-shadow: none !important;
+  }
+}
+
+/* ============================================
+   DARK MODE GLOBAL ADJUSTMENTS
+   ============================================ */
+
+.guc-dark-mode .guc-gpa-box {
+  background: linear-gradient(135deg, rgba(0, 102, 204, 0.15) 0%, rgba(0, 74, 153, 0.08) 100%);
+}
+
+.guc-dark-mode .guc-gpa-box.guc-predicted {
+  background: linear-gradient(135deg, rgba(212, 168, 67, 0.2) 0%, rgba(212, 168, 67, 0.08) 100%);
+}
+
+.guc-dark-mode .guc-goal-section {
+  background: rgba(212, 168, 67, 0.1);
+}
+
+.guc-dark-mode .guc-stat-item {
+  background: rgba(0, 102, 204, 0.1);
+}
+
+.guc-dark-mode .guc-btn-primary {
+  background: linear-gradient(135deg, var(--guc-gold) 0%, var(--guc-gold-dark) 100%);
+}
