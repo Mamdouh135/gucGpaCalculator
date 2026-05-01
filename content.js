@@ -27,6 +27,8 @@
   let currentSemesterData = [];   // Courses from current page
   let allSemestersData = {};      // All stored semesters {semesterId: courses[]}
   let predictedGrades = {};
+  let userPendingCourses = [];
+  const USER_PENDING_KEY = 'userPendingCourses';
   let transcriptTable = null;
   let semesterDropdown = null;
   let currentSemesterId = '';
@@ -38,12 +40,14 @@
     console.log('🎓 GUC GPA Calculator: Initializing...');
     
     // Load stored data
+
     try {
-      const storage = await chrome.storage.local.get(['enabled', 'darkMode', 'predictedGrades', CONFIG.STORAGE_KEY]);
+      const storage = await chrome.storage.local.get(['enabled', 'darkMode', 'predictedGrades', CONFIG.STORAGE_KEY, USER_PENDING_KEY]);
       isEnabled = storage.enabled !== false;
       isDarkMode = storage.darkMode || false;
       predictedGrades = storage.predictedGrades || {};
       allSemestersData = storage[CONFIG.STORAGE_KEY] || {};
+      userPendingCourses = Array.isArray(storage[USER_PENDING_KEY]) ? storage[USER_PENDING_KEY] : [];
     } catch (e) {
       console.log('🎓 Storage not available, using defaults');
     }
@@ -651,12 +655,21 @@
             </div>
           </div>
           <div class="guc-section-body" id="guc-overview-body">
-                        <form id="guc-add-pending-form" style="display:none;margin-bottom:12px;gap:8px;align-items:center;flex-wrap:wrap;">
-                          <input id="guc-pending-name" type="text" placeholder="Course Name" style="width:120px;font-size:13px;" required />
-                          <input id="guc-pending-credits" type="number" min="1" step="1" placeholder="Credits" style="width:60px;font-size:13px;" required />
-                          <button type="submit" class="guc-btn-small" style="font-size:13px;">Add</button>
-                          <button type="button" id="guc-cancel-pending" class="guc-btn-small" style="font-size:13px;">Cancel</button>
-                        </form>
+            <form id="guc-add-pending-form" class="guc-pending-form" style="display:none;">
+              <div class="guc-pending-form-fields">
+                <input id="guc-pending-name" type="text" placeholder="Course Name" required />
+                <input id="guc-pending-credits" type="number" min="1" step="1" placeholder="Credits" required />
+                <button type="submit" class="guc-btn guc-btn-primary">Add</button>
+                <button type="button" id="guc-cancel-pending" class="guc-btn guc-btn-small">Cancel</button>
+              </div>
+            </form>
+            <div id="guc-pending-list-section" class="guc-pending-list-section" style="display:none;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:13px;font-weight:600;">Pending Courses</span>
+                <button id="guc-delete-all-pending" class="guc-btn guc-btn-small" style="color:#dc3545;font-size:13px;">🗑️ Delete All</button>
+              </div>
+              <ul id="guc-pending-list" class="guc-pending-list"></ul>
+            </div>
             <div class="guc-gpa-section">
               <div class="guc-gpa-box">
                 <span class="guc-gpa-label">Current GPA</span>
@@ -719,17 +732,18 @@
 
         <div class="guc-section" id="guc-section-goal">
           <div class="guc-section-header" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
-            <span style="font-size:15px;font-weight:600;">🎯 Goal Finder & Grading Info</span>
+            <span style="font-size:15px;font-weight:600;">🎯 Set Target GPA</span>
             <button id="toggle-goal" class="guc-btn-small" style="font-size:16px;">▼</button>
           </div>
           <div class="guc-section-body" id="guc-goal-body" style="display:none;">
             <div class="guc-goal-section">
               <div class="guc-goal-input-group">
                 <label for="guc-target-gpa">Target GPA:</label>
-                <input type="number" id="guc-target-gpa" min="${CONFIG.MIN_GRADE}" max="${CONFIG.MAX_GRADE}" step="0.1" placeholder="e.g., 1.7">
+                <input type="number" id="guc-target-gpa" min="${CONFIG.MIN_GRADE}" max="${CONFIG.MAX_GRADE}" step="0.01" placeholder="e.g., 1.7">
                 <button id="guc-calculate-goal" class="guc-btn guc-btn-primary">Calculate</button>
               </div>
               <div id="guc-goal-result" class="guc-goal-result"></div>
+              <button id="guc-show-other-suggestions" class="guc-btn guc-btn-primary" style="margin-top:8px;display:none;">Show Other Suggestions</button>
             </div>
             <div class="info-box" style="margin:18px 0 0 0;">
               <h3 style="font-size:15px;margin-bottom:4px;">ℹ️ GUC Grading & GPA Calculation</h3>
@@ -759,48 +773,89 @@
     const cancelPendingBtn = document.getElementById('guc-cancel-pending');
     if (addPendingBtn && addPendingForm && pendingNameInput && pendingCreditsInput && cancelPendingBtn) {
       addPendingBtn.addEventListener('click', () => {
-        addPendingForm.style.display = 'flex';
+        addPendingForm.style.display = 'block';
         addPendingBtn.style.display = 'none';
         pendingNameInput.value = '';
         pendingCreditsInput.value = '';
+        renderPendingList();
       });
       cancelPendingBtn.addEventListener('click', () => {
         addPendingForm.style.display = 'none';
         addPendingBtn.style.display = '';
+        renderPendingList();
       });
       addPendingForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = pendingNameInput.value.trim();
         const credits = parseInt(pendingCreditsInput.value, 10);
         if (!name || isNaN(credits) || credits <= 0) return;
-        // Add to currentSemesterData
-        currentSemesterData.push({
-          rowIndex: currentSemesterData.length,
-          row: null,
-          gradeCell: null,
+        userPendingCourses.push({
+          id: Date.now() + Math.random(),
           courseName: name,
-          creditHours: credits,
-          grade: null,
-          isPending: true,
-          isGerman: false,
-          germanLevel: null,
-          isEnglish: false,
-          semesterId: currentSemesterId
+          creditHours: credits
         });
-        await saveSemesterData();
+        await chrome.storage.local.set({ [USER_PENDING_KEY]: userPendingCourses });
         addPendingForm.style.display = 'none';
         addPendingBtn.style.display = '';
         updateGPACalculations();
+        renderPendingList();
+      });
+      // Delete all pending
+      const deleteAllBtn = document.getElementById('guc-delete-all-pending');
+      if (deleteAllBtn) {
+        deleteAllBtn.addEventListener('click', async () => {
+          userPendingCourses = [];
+          await chrome.storage.local.set({ [USER_PENDING_KEY]: userPendingCourses });
+          updateGPACalculations();
+          renderPendingList();
+        });
+      }
+    }
+
+    // Render pending courses list
+    function renderPendingList() {
+      const pendingListSection = document.getElementById('guc-pending-list-section');
+      const pendingList = document.getElementById('guc-pending-list');
+      if (!pendingListSection || !pendingList) return;
+      const pending = userPendingCourses;
+      if (pending.length === 0) {
+        pendingListSection.style.display = 'none';
+        pendingList.innerHTML = '';
+        return;
+      }
+      pendingListSection.style.display = 'block';
+      pendingList.innerHTML = pending.map((c, idx) => `
+        <li class="guc-pending-item">
+          <span class="guc-pending-name">${c.courseName}</span>
+          <span class="guc-pending-credits">${c.creditHours} cr</span>
+          <button class="guc-btn guc-btn-small guc-delete-pending" data-id="${c.id}" title="Delete">🗑️</button>
+        </li>
+      `).join('');
+      // Add delete listeners
+      pendingList.querySelectorAll('.guc-delete-pending').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const id = btn.getAttribute('data-id');
+          const i = userPendingCourses.findIndex(c => String(c.id) === String(id));
+          if (i !== -1) {
+            userPendingCourses.splice(i, 1);
+            await chrome.storage.local.set({ [USER_PENDING_KEY]: userPendingCourses });
+            updateGPACalculations();
+            renderPendingList();
+          }
+        });
       });
     }
+    // Render on dashboard open
+    renderPendingList();
 
     // Add event listeners
     document.getElementById('guc-dark-toggle').addEventListener('click', toggleDarkMode);
     document.getElementById('guc-minimize').addEventListener('click', toggleMinimize);
-    document.getElementById('guc-calculate-goal').addEventListener('click', (e) => { e.preventDefault(); calculateGoal(); });
+    document.getElementById('guc-calculate-goal').addEventListener('click', (e) => { e.preventDefault(); calculateGoalWithSuggestions(); });
     document.getElementById('guc-target-gpa').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); calculateGoal(); }
+      if (e.key === 'Enter') { e.preventDefault(); calculateGoalWithSuggestions(); }
     });
+    document.getElementById('guc-show-other-suggestions').addEventListener('click', showOtherGradeSuggestion);
     document.getElementById('guc-clear-semesters').addEventListener('click', clearStoredSemesters);
 
     // Collapsible section toggles
@@ -832,6 +887,165 @@
 
     // Make dashboard draggable
     makeDraggable(dashboard);
+  }
+
+  // --- Target GPA with Grade Combination Suggestions ---
+  let gradeCombinations = [];
+  let currentCombinationIndex = 0;
+
+  function calculateGoalWithSuggestions() {
+    const targetGpaInput = document.getElementById('guc-target-gpa');
+    const targetResult = document.getElementById('guc-goal-result');
+    const showOtherBtn = document.getElementById('guc-show-other-suggestions');
+    const target = parseFloat(targetGpaInput.value);
+    if (isNaN(target) || target < CONFIG.MIN_GRADE || target > CONFIG.MAX_GRADE) {
+      targetResult.innerHTML = '<span style="color:#d48806">Enter a valid target GPA (' + CONFIG.MIN_GRADE + ' - ' + CONFIG.MAX_GRADE + ')</span>';
+      showOtherBtn.style.display = 'none';
+      return;
+    }
+
+    // Get completed and pending courses from all semesters
+    let completedCourses = getAllStoredCourses().filter(c => !c.isPending && c.grade !== null);
+    let pendingCourses = userPendingCourses.slice();
+
+    const completedCredits = completedCourses.reduce((sum, c) => sum + Number(c.creditHours), 0);
+    const completedWeightedSum = completedCourses.reduce((sum, c) => sum + (Number(c.grade) * Number(c.creditHours)), 0);
+    const pendingCredits = pendingCourses.reduce((sum, c) => sum + Number(c.creditHours), 0);
+
+    if (pendingCredits === 0) {
+      targetResult.innerHTML = '<span style="color:#d48806">No pending courses entered.</span>';
+      showOtherBtn.style.display = 'none';
+      return;
+    }
+
+    const totalCredits = completedCredits + pendingCredits;
+    const targetWeightedSum = target * totalCredits;
+    const requiredPendingWeightedSum = targetWeightedSum - completedWeightedSum;
+    const requiredAvgGrade = requiredPendingWeightedSum / pendingCredits;
+
+    if (requiredAvgGrade < CONFIG.MIN_GRADE) {
+      targetResult.innerHTML = `❌ Not possible: The best achievable grade is ${CONFIG.MIN_GRADE}, but you would need an average of <b>${requiredAvgGrade.toFixed(2)}</b>.<br>`;
+      showOtherBtn.style.display = 'none';
+      return;
+    }
+    if (requiredAvgGrade > CONFIG.MAX_GRADE) {
+      targetResult.innerHTML = `❌ Achieving a GPA of <b>${target}</b> is not possible.<br>Would require: <b>${requiredAvgGrade.toFixed(2)}</b> (above failing)`;
+      showOtherBtn.style.display = 'none';
+      return;
+    }
+
+    // Generate all possible grade combinations for pending courses
+    gradeCombinations = generateGradeCombinations(pendingCourses, requiredPendingWeightedSum, target, completedCourses);
+    currentCombinationIndex = 0;
+
+    if (gradeCombinations.length === 0) {
+      targetResult.innerHTML = `❌ No valid grade combinations found to achieve a GPA of <b>${target}</b> with your current courses.`;
+      showOtherBtn.style.display = 'none';
+      return;
+    }
+
+    showCurrentGradeCombination();
+    if (gradeCombinations.length > 1) {
+      showOtherBtn.style.display = '';
+    } else {
+      showOtherBtn.style.display = 'none';
+    }
+  }
+
+  function generateGradeCombinations(pendingCourses, requiredSum, userTargetGpa, completedCourses) {
+    const gradeSteps = [0.7, 1.0, 1.3, 1.7, 2.0, 2.3, 2.7, 3.0, 3.3, 3.7, 5.0];
+    const n = pendingCourses.length;
+    const credits = pendingCourses.map(c => Number(c.creditHours));
+    const combinations = [];
+    // Try all combinations for up to 4 courses
+    function tryCombinations(idx, current) {
+      if (idx === n) {
+        // Calculate GPA for this combination
+        let weightedSum = 0, totalCredits = 0;
+        for (let i = 0; i < n; ++i) {
+          weightedSum += current[i] * credits[i];
+          totalCredits += credits[i];
+        }
+        if (completedCourses) {
+          for (const c of completedCourses) {
+            weightedSum += c.grade * c.creditHours;
+            totalCredits += c.creditHours;
+          }
+        }
+        const gpa = weightedSum / totalCredits;
+        if (gpa >= userTargetGpa - 0.0001) {
+          combinations.push({ grades: [...current], gpa: gpa, sum: current.reduce((a, b) => a + b, 0) });
+        }
+        return;
+      }
+      for (let g of gradeSteps) {
+        current.push(g);
+        tryCombinations(idx + 1, current);
+        current.pop();
+      }
+    }
+    if (n >= 1 && n <= 4) {
+      tryCombinations(0, []);
+      combinations.sort((a, b) => (a.gpa - b.gpa) || (a.sum - b.sum));
+      if (combinations.length > 0) {
+        const minGPA = combinations[0].gpa;
+        return combinations.filter(c => Math.abs(c.gpa - minGPA) < 0.01).map(c => c.grades);
+      }
+      return [];
+    } else {
+      // For more than 4 courses, just suggest equal grades (minimum that meets/exceeds target)
+      let totalCredits = credits.reduce((a, b) => a + b, 0);
+      let completedWeightedSum = 0, completedCredits = 0;
+      if (completedCourses) {
+        for (const c of completedCourses) {
+          completedWeightedSum += c.grade * c.creditHours;
+          completedCredits += c.creditHours;
+        }
+      }
+      let needed = (userTargetGpa * (totalCredits + completedCredits) - completedWeightedSum) / totalCredits;
+      let valid = gradeSteps.filter(g => g >= needed);
+      if (valid.length > 0 && valid[0] <= 5.0) {
+        return [Array(n).fill(valid[0])];
+      }
+      return [];
+    }
+  }
+
+  function showCurrentGradeCombination() {
+    const targetResult = document.getElementById('guc-goal-result');
+    if (!gradeCombinations.length) return;
+    const comb = gradeCombinations[currentCombinationIndex];
+    let html = `<b>Possible grade combination:</b><br><ul style="margin:8px 0 0 0;">`;
+    let pendingCourses = userPendingCourses.slice();
+    for (let i = 0; i < comb.length; ++i) {
+      const num = comb[i];
+      const letter = numericToLetterGrade(num);
+      const name = pendingCourses[i]?.courseName || `Course ${i+1}`;
+      html += `<li>${name}: <b>${num}</b> (${letter})</li>`;
+    }
+    html += '</ul>';
+    html += `<div style="margin-top:6px;font-size:12px;color:#888;">Suggestion ${currentCombinationIndex + 1} of ${gradeCombinations.length}</div>`;
+    targetResult.innerHTML = html;
+  }
+
+  function showOtherGradeSuggestion() {
+    if (!gradeCombinations.length) return;
+    currentCombinationIndex = (currentCombinationIndex + 1) % gradeCombinations.length;
+    showCurrentGradeCombination();
+  }
+
+  function numericToLetterGrade(grade) {
+    if (grade === 0.7) return 'A+';
+    if (grade === 1.0) return 'A';
+    if (grade === 1.3) return 'A-';
+    if (grade === 1.7) return 'B+';
+    if (grade === 2.0) return 'B';
+    if (grade === 2.3) return 'B-';
+    if (grade === 2.7) return 'C+';
+    if (grade === 3.0) return 'C';
+    if (grade === 3.3) return 'C-';
+    if (grade === 3.7) return 'D';
+    return 'F';
   }
 
   // Update GPA calculations using ALL stored semesters
@@ -898,16 +1112,7 @@
       }
     });
 
-    // Add predicted grades from current page
-    currentSemesterData.forEach((course) => {
-      if (course.isPending) {
-        const predictedGrade = predictedGrades[course.rowIndex];
-        if (predictedGrade !== undefined && !isNaN(predictedGrade)) {
-          predictedCredits += course.creditHours;
-          predictedWeightedSum += predictedGrade * course.creditHours;
-        }
-      }
-    });
+    // Add predicted grades from current page (no-op for pending, since now separate)
 
     // Calculate GPAs
     const currentGPA = completedCredits > 0 ? 
@@ -1052,13 +1257,15 @@
 
     allCourses.forEach((course) => {
       if (course.creditHours <= 0 || course.isSuperseded) return;
-
       if (!course.isPending && course.grade !== null) {
         completedCredits += course.creditHours;
         completedWeightedSum += course.grade * course.creditHours;
-      } else if (course.isPending) {
-        pendingCredits += course.creditHours;
       }
+    });
+    // Add pending courses from userPendingCourses
+     pendingCredits = 0;
+    userPendingCourses.forEach((course) => {
+      pendingCredits += course.creditHours;
     });
 
     if (pendingCredits === 0) {
