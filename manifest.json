@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GUC Transcript GPA Calculator",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Calculate and predict your GPA on the GUC Student Portal transcript page",
   "author": "GUC Student Tools",
   "permissions": [
